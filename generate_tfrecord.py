@@ -1,99 +1,106 @@
-# Kütüphaneleri ekleme
+"""
+Usage:
+  # From tensorflow/models/
+  # Create train data:
+  python generate_tfrecord.py --csv_input=images/train_labels.csv --image_dir=images/train --output_path=train.record
+
+  # Create test data:
+  python generate_tfrecord.py --csv_input=images/test_labels.csv  --image_dir=images/test --output_path=test.record
+"""
+from __future__ import division
+from __future__ import print_function
+from __future__ import absolute_import
+
 import os
-import cv2
-import numpy as np
+import io
+import pandas as pd
 import tensorflow as tf
-import sys
 
-# Object detection klasöründe olduğumuz için bütün gerekenlere erişmek için path i belirliyoruz
-sys.path.append("..")
+from PIL import Image
+from object_detection.utils import dataset_util
+from collections import namedtuple, OrderedDict
 
-# Modülleri ekleme
-from utils import label_map_util
-from utils import visualization_utils as vis_util
-
-# Kullandığımız nesne tanıma modülünün klasörünü belirliyoruz
-MODEL_NAME = 'inference_graph'
-IMAGE_NAME = 'test.jpg'
-
-# Üzerinde çalıştığımız dizini alıyoruz
-CWD_PATH = os.getcwd()
-
-# Nesne tanıma için kullanacağımız eğitilmiş modelimizi içeren inference_graph dosyasının dizinini belirtiyoruz.
-PATH_TO_CKPT = os.path.join(CWD_PATH,MODEL_NAME,'frozen_inference_graph.pb')
-
-# Etiket haritamızın dizinini belirtiyoruz.
-PATH_TO_LABELS = os.path.join(CWD_PATH,'training','labelmap.pbtxt')
-
-# Fotoğrafımızın dizinini belirtiyoruz.
-PATH_TO_IMAGE = os.path.join(CWD_PATH,IMAGE_NAME)
-
-# Sınıf sayımızı belirtiyoruz. Ben de dört tane sınıf olduğu için dört yazdım.
-NUM_CLASSES = 4
-
-# Etiket haritasını yüklüyoruz.
-# Bu sayede modelimiz örnek olarak 4 sayısını tahmin olarak döndürdüğünde bu sayının ceket’e karşılık geldiğini bileceğiz.
-# Burada biz dahili fayda fonksiyonlarını kullanıyoruz, fakat integer değerlerini string karşılığına çeviren herhangi bir sözlük #de kullanılabilir.
-label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
-categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
-category_index = label_map_util.create_category_index(categories)
-
-# Eğittiğimiz tensorflow modelimizi yüklüyoruz.
-detection_graph = tf.Graph()
-with detection_graph.as_default():
-    od_graph_def = tf.GraphDef()
-    with tf.gfile.GFile(PATH_TO_CKPT, 'rb') as fid:
-        serialized_graph = fid.read()
-        od_graph_def.ParseFromString(serialized_graph)
-        tf.import_graph_def(od_graph_def, name='')
-
-    sess = tf.Session(graph=detection_graph)
-
-# Nesne algılama sınıflandırıcısı için giriş ve çıkış tensörlerini (yani verileri) tanımlama
-# Giriş değerlerimiz fotoğraflamızı oluyor.
-image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
+flags = tf.app.flags
+flags.DEFINE_string('csv_input', '', 'Path to the CSV input')
+flags.DEFINE_string('image_dir', '', 'Path to the image directory')
+flags.DEFINE_string('output_path', '', 'Path to output TFRecord')
+FLAGS = flags.FLAGS
 
 
-# Çıkış tensörleri algılama kutuları, puanlar ve sınıflardır.
-# Burada tanımlama kutularını belirliyoruz.
-# Her kutu, görüntünün belirli bir nesnenin algılandığı bölümünü temsil eder
-detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
+# TO-DO replace this with label map
+def class_text_to_int(row_label):
+    if row_label == 't-shirt':
+        return 1
+    elif row_label == 'gomlek':
+        return 2
+    elif row_label == 'pantolon':
+        return 3
+    elif row_label == 'ceket':
+        return 4
+    else:
+        return 0
 
-#Burada modelin her bir nesneyi tanıma skor değerlerini belirliyoruz. 
-# Her bir skor değeri modelimizin nesneyi ne kadar yüksek bir oranda tanıdığını temsil ediyor ve bu skorlar nesnenin etiketi #ve tanımlama kutuları ile beraber gözükecek.
-detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
-detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 
-# Tanınan nesnelerin sayısını belirliyoruz. Tanınan nesne sayısını bilebileceğiz bu sayede.
-num_detections = detection_graph.get_tensor_by_name('num_detections:0')
+def split(df, group):
+    data = namedtuple('data', ['filename', 'object'])
+    gb = df.groupby(group)
+    return [data(filename, gb.get_group(x)) for filename, x in zip(gb.groups.keys(), gb.groups)]
 
-# Resimleri opencv kullanarak yükleme ve resmi [1, None, None, 3] boyutlarına göre genişlet.
-# Yani her bir satırdaki öğenin rgb değerleri olduğu tek sütunlu bir dizi oluştur.
-image = cv2.imread(PATH_TO_IMAGE)
-image_expanded = np.expand_dims(image, axis=0)
 
-# Modeli input olarak resim ile çalıştırarak asıl algılamayı gerçekleştirme.
-(boxes, scores, classes, num) = sess.run(
-    [detection_boxes, detection_scores, detection_classes, num_detections],
-    feed_dict={image_tensor: image_expanded})
+def create_tf_example(group, path):
+    with tf.gfile.GFile(os.path.join(path, '{}'.format(group.filename)), 'rb') as fid:
+        encoded_jpg = fid.read()
+    encoded_jpg_io = io.BytesIO(encoded_jpg)
+    image = Image.open(encoded_jpg_io)
+    width, height = image.size
 
-# Algılamanın sonuçlarını çiz, algılama kutularını ve algılama sonucunu gösterme.
+    filename = group.filename.encode('utf8')
+    image_format = b'jpg'
+    xmins = []
+    xmaxs = []
+    ymins = []
+    ymaxs = []
+    classes_text = []
+    classes = []
 
-vis_util.visualize_boxes_and_labels_on_image_array(
-    image,
-    np.squeeze(boxes),
-    np.squeeze(classes).astype(np.int32),
-    np.squeeze(scores),
-    category_index,
-    use_normalized_coordinates=True,
-    line_thickness=8,
-    min_score_thresh=0.80)
+    for index, row in group.object.iterrows():
+        xmins.append(row['xmin'] / width)
+        xmaxs.append(row['xmax'] / width)
+        ymins.append(row['ymin'] / height)
+        ymaxs.append(row['ymax'] / height)
+        classes_text.append(row['class'].encode('utf8'))
+        classes.append(class_text_to_int(row['class']))
 
-# Sonuçlarla beraber resmi gösterme.
-cv2.imshow('Object detector', image)
+    tf_example = tf.train.Example(features=tf.train.Features(feature={
+        'image/height': dataset_util.int64_feature(height),
+        'image/width': dataset_util.int64_feature(width),
+        'image/filename': dataset_util.bytes_feature(filename),
+        'image/source_id': dataset_util.bytes_feature(filename),
+        'image/encoded': dataset_util.bytes_feature(encoded_jpg),
+        'image/format': dataset_util.bytes_feature(image_format),
+        'image/object/bbox/xmin': dataset_util.float_list_feature(xmins),
+        'image/object/bbox/xmax': dataset_util.float_list_feature(xmaxs),
+        'image/object/bbox/ymin': dataset_util.float_list_feature(ymins),
+        'image/object/bbox/ymax': dataset_util.float_list_feature(ymaxs),
+        'image/object/class/text': dataset_util.bytes_list_feature(classes_text),
+        'image/object/class/label': dataset_util.int64_list_feature(classes),
+    }))
+    return tf_example
 
-# Resmi kapamak için herhangi bir tuşa basma.
-cv2.waitKey(0)
 
-# Herşeyi yok edip temizleme.
-cv2.destroyAllWindows()
+def main(_):
+    writer = tf.python_io.TFRecordWriter(FLAGS.output_path)
+    path = os.path.join(os.getcwd(), FLAGS.image_dir)
+    examples = pd.read_csv(FLAGS.csv_input)
+    grouped = split(examples, 'filename')
+    for group in grouped:
+        tf_example = create_tf_example(group, path)
+        writer.write(tf_example.SerializeToString())
+
+    writer.close()
+    output_path = os.path.join(os.getcwd(), FLAGS.output_path)
+    print('Successfully created the TFRecords: {}'.format(output_path))
+
+
+if __name__ == '__main__':
+    tf.app.run()
