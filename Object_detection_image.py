@@ -1,64 +1,44 @@
-######## Image Object Detection Using Tensorflow-trained Classifier #########
-#
-# Author: Evan Juras
-# Date: 1/15/18
-# Description: 
-# This program uses a TensorFlow-trained classifier to perform object detection.
-# It loads the classifier uses it to perform object detection on an image.
-# It draws boxes and scores around the objects of interest in the image.
-
-## Some of the code is copied from Google's example at
-## https://github.com/tensorflow/models/blob/master/research/object_detection/object_detection_tutorial.ipynb
-
-## and some is copied from Dat Tran's example at
-## https://github.com/datitran/object_detector_app/blob/master/object_detection_app.py
-
-## but I changed it to make it more understandable to me.
-
-# Import packages
+# Kütüphaneleri ekleme
 import os
 import cv2
 import numpy as np
 import tensorflow as tf
 import sys
 
-# This is needed since the notebook is stored in the object_detection folder.
+# Object detection klasöründe olduğumuz için bütün gerekenlere erişmek için path i belirliyoruz
 sys.path.append("..")
 
-# Import utilites
+# Modülleri ekleme
 from utils import label_map_util
 from utils import visualization_utils as vis_util
 
-# Name of the directory containing the object detection module we're using
+# Kullandığımız nesne tanıma modülünün klasörünü belirliyoruz
 MODEL_NAME = 'inference_graph'
 IMAGE_NAME = 'test.jpg'
 
-# Grab path to current working directory
+# Üzerinde çalıştığımız dizini alıyoruz
 CWD_PATH = os.getcwd()
 
-# Path to frozen detection graph .pb file, which contains the model that is used
-# for object detection.
+# Nesne tanıma için kullanacağımız eğitilmiş modelimizi içeren inference_graph dosyasının dizinini belirtiyoruz.
 PATH_TO_CKPT = os.path.join(CWD_PATH,MODEL_NAME,'frozen_inference_graph.pb')
 
-# Path to label map file
+# Etiket haritamızın dizinini belirtiyoruz.
 PATH_TO_LABELS = os.path.join(CWD_PATH,'training','labelmap.pbtxt')
 
-# Path to image
+# Fotoğrafımızın dizinini belirtiyoruz.
 PATH_TO_IMAGE = os.path.join(CWD_PATH,IMAGE_NAME)
 
-# Number of classes the object detector can identify
+# Sınıf sayımızı belirtiyoruz. Ben de dört tane sınıf olduğu için dört yazdım.
 NUM_CLASSES = 4
 
-# Load the label map.
-# Label maps map indices to category names, so that when our convolution
-# network predicts `5`, we know that this corresponds to `king`.
-# Here we use internal utility functions, but anything that returns a
-# dictionary mapping integers to appropriate string labels would be fine
+# Etiket haritasını yüklüyoruz.
+# Bu sayede modelimiz örnek olarak 4 sayısını tahmin olarak döndürdüğünde bu sayının ceket’e karşılık geldiğini bileceğiz.
+# Burada biz dahili fayda fonksiyonlarını kullanıyoruz, fakat integer değerlerini string karşılığına çeviren herhangi bir sözlük #de kullanılabilir.
 label_map = label_map_util.load_labelmap(PATH_TO_LABELS)
 categories = label_map_util.convert_label_map_to_categories(label_map, max_num_classes=NUM_CLASSES, use_display_name=True)
 category_index = label_map_util.create_category_index(categories)
 
-# Load the Tensorflow model into memory.
+# Eğittiğimiz tensorflow modelimizi yüklüyoruz.
 detection_graph = tf.Graph()
 with detection_graph.as_default():
     od_graph_def = tf.GraphDef()
@@ -69,35 +49,35 @@ with detection_graph.as_default():
 
     sess = tf.Session(graph=detection_graph)
 
-# Define input and output tensors (i.e. data) for the object detection classifier
-
-# Input tensor is the image
+# Nesne algılama sınıflandırıcısı için giriş ve çıkış tensörlerini (yani verileri) tanımlama
+# Giriş değerlerimiz fotoğraflamızı oluyor.
 image_tensor = detection_graph.get_tensor_by_name('image_tensor:0')
 
-# Output tensors are the detection boxes, scores, and classes
-# Each box represents a part of the image where a particular object was detected
+
+# Çıkış tensörleri algılama kutuları, puanlar ve sınıflardır.
+# Burada tanımlama kutularını belirliyoruz.
+# Her kutu, görüntünün belirli bir nesnenin algılandığı bölümünü temsil eder
 detection_boxes = detection_graph.get_tensor_by_name('detection_boxes:0')
 
-# Each score represents level of confidence for each of the objects.
-# The score is shown on the result image, together with the class label.
+#Burada modelin her bir nesneyi tanıma skor değerlerini belirliyoruz. 
+# Her bir skor değeri modelimizin nesneyi ne kadar yüksek bir oranda tanıdığını temsil ediyor ve bu skorlar nesnenin etiketi #ve tanımlama kutuları ile beraber gözükecek.
 detection_scores = detection_graph.get_tensor_by_name('detection_scores:0')
 detection_classes = detection_graph.get_tensor_by_name('detection_classes:0')
 
-# Number of objects detected
+# Tanınan nesnelerin sayısını belirliyoruz. Tanınan nesne sayısını bilebileceğiz bu sayede.
 num_detections = detection_graph.get_tensor_by_name('num_detections:0')
 
-# Load image using OpenCV and
-# expand image dimensions to have shape: [1, None, None, 3]
-# i.e. a single-column array, where each item in the column has the pixel RGB value
+# Resimleri opencv kullanarak yükleme ve resmi [1, None, None, 3] boyutlarına göre genişlet.
+# Yani her bir satırdaki öğenin rgb değerleri olduğu tek sütunlu bir dizi oluştur.
 image = cv2.imread(PATH_TO_IMAGE)
 image_expanded = np.expand_dims(image, axis=0)
 
-# Perform the actual detection by running the model with the image as input
+# Modeli input olarak resim ile çalıştırarak asıl algılamayı gerçekleştirme.
 (boxes, scores, classes, num) = sess.run(
     [detection_boxes, detection_scores, detection_classes, num_detections],
     feed_dict={image_tensor: image_expanded})
 
-# Draw the results of the detection (aka 'visulaize the results')
+# Algılamanın sonuçlarını çiz, algılama kutularını ve algılama sonucunu gösterme.
 
 vis_util.visualize_boxes_and_labels_on_image_array(
     image,
@@ -109,11 +89,11 @@ vis_util.visualize_boxes_and_labels_on_image_array(
     line_thickness=8,
     min_score_thresh=0.80)
 
-# All the results have been drawn on image. Now display the image.
+# Sonuçlarla beraber resmi gösterme.
 cv2.imshow('Object detector', image)
 
-# Press any key to close the image
+# Resmi kapamak için herhangi bir tuşa basma.
 cv2.waitKey(0)
 
-# Clean up
+# Herşeyi yok edip temizleme.
 cv2.destroyAllWindows()
